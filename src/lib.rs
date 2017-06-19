@@ -153,14 +153,14 @@ pub fn process_file(filepath: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    extern crate unindent;
+    use self::unindent::unindent;
+
     use super::*;
 
     /***
      * Helpers
      */
-
-    const BASIC_SMT: &str = "return;";
-    const INDENT: &str = "    ";
 
     macro_rules! tok {
         (code $string : expr) => (Token::Code(String::from($string)));
@@ -175,9 +175,9 @@ mod tests {
 
     #[test]
     fn test_tokenize_single_statement_no_newline() {
-        let code = BASIC_SMT;
+        let code = "statement;";
         let expected = vec![
-            tok!(code BASIC_SMT),
+            tok!(code "statement;"),
         ];
         let actual = tokenize(code);
         assert_eq!(expected, actual);
@@ -185,9 +185,9 @@ mod tests {
 
     #[test]
     fn test_tokenize_single_statement() {
-        let code = format!("{}\n", BASIC_SMT);
+        let code = "statement;\n";
         let expected = vec![
-            tok!(code BASIC_SMT),
+            tok!(code "statement;"),
             tok!(nl),
         ];
         let actual = tokenize(&code);
@@ -196,11 +196,14 @@ mod tests {
 
     #[test]
     fn test_tokenize_newline() {
-        let code = format!("{0}\n{0}\n", BASIC_SMT);
+        let code = unindent("
+            statement;
+            statement;
+            ");
         let expected = vec![
-            tok!(code BASIC_SMT),
+            tok!(code "statement;"),
             tok!(nl),
-            tok!(code BASIC_SMT),
+            tok!(code "statement;"),
             tok!(nl),
         ];
         let actual = tokenize(&code);
@@ -209,13 +212,14 @@ mod tests {
 
     #[test]
     fn test_tokenize_single_indent_and_dedent() {
-        let code = format!("{0}\n{1}{0}\n", BASIC_SMT, INDENT);
+        let code = unindent("
+            if condition
+                something happens;");
         let expected = vec![
-            tok!(code BASIC_SMT),
+            tok!(code "if condition"),
             tok!(nl),
-            tok!(indent INDENT),
-            tok!(code BASIC_SMT),
-            tok!(nl),
+            tok!(indent "    "),
+            tok!(code "something happens;"),
             tok!(dedent),
         ];
         let actual = tokenize(&code);
