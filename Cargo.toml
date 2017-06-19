@@ -1,0 +1,4 @@
+[package]
+authors = ["Athir Saleem <noc7c9@gmail.com>"]
+name = "pyfection"
+version = "0.1.0"
