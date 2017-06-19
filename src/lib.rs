@@ -9,11 +9,12 @@ use std::io::{BufReader, Read};
 // const BLOCK_COMMENT_END: &str = "*/";
 
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 enum Token {
     Code(String),
     Newline,
     Indent(String), Dedent,
+    OpenBrace, CloseBrace,
     // BlockComment(String), InlineComment(String),
 }
 
@@ -126,6 +127,38 @@ fn tokenize(code: &str) -> Vec<Token> {
     return token_list.tokens;
 }
 
+fn transform(mut input: Vec<Token>) -> Vec<Token> {
+    let mut output = Vec::<Token>::new();
+
+    for tok in input.drain(..) {
+        match tok {
+            Token::Indent(_) => {
+                // should only panic on invalid input
+                let newline = output.pop().unwrap();
+
+                output.push(Token::Code(String::from(" ")));
+                output.push(Token::OpenBrace);
+
+                output.push(newline);
+
+                output.push(tok);
+            },
+            Token::Dedent => {
+                // make sure previous token is a newline
+                if output.last() != Some(&Token::Newline) {
+                    output.push(Token::Newline);
+                }
+
+                output.push(Token::CloseBrace);
+                output.push(Token::Newline);
+            },
+            _ => output.push(tok),
+        }
+    }
+
+    return output;
+}
+
 fn generate_code(tokens: &Vec<Token>) -> String {
     let mut code = String::new();
 
@@ -135,6 +168,8 @@ fn generate_code(tokens: &Vec<Token>) -> String {
             &Token::Newline => code.push('\n'),
             &Token::Indent(ref string) => code.push_str(&string),
             &Token::Dedent => (),
+            &Token::OpenBrace => code.push('{'),
+            &Token::CloseBrace => code.push('}'),
         }
     }
 
@@ -143,6 +178,7 @@ fn generate_code(tokens: &Vec<Token>) -> String {
 
 fn process(code: &str) -> String {
     let tokens = tokenize(code);
+    let tokens = transform(tokens);
     let code = generate_code(&tokens);
 
     return code;
@@ -189,15 +225,27 @@ mod tests {
         (nl) => (Token::Newline);
         (indent $string : expr) => (Token::Indent(String::from($string)));
         (dedent) => (Token::Dedent);
+        (open brace) => (Token::OpenBrace);
+        (close brace) => (Token::CloseBrace);
     }
 
-    fn full_process_assert(input: &str, expected_tokens: Vec<Token>) {
+    fn full_process_assert(input: &str,
+                           expected_tokens: Vec<Token>,
+                           expected_transform: Vec<Token>,
+                           expected_code: &str) {
         // assert that generated token list is the same as expected token list
         let generated_tokens = tokenize(input);
         assert_eq!(expected_tokens, generated_tokens);
 
-        // assert that untransformed generated token list matches the code
+        // assert that untransformed generated code matches the input code
         assert_eq!(input, generate_code(&generated_tokens));
+
+        // assert that transformed token list matches expected output
+        let transformed_tokens = transform(generated_tokens);
+        assert_eq!(expected_transform, transformed_tokens);
+
+        // assert that transformed generated code matches the expected output
+        assert_eq!(expected_code, generate_code(&transformed_tokens));
     }
 
     /***
@@ -206,86 +254,126 @@ mod tests {
 
     #[test]
     fn test_tokenize_single_statement_no_newline() {
-        let code = "statement;";
+        let input = "statement;";
         let tokens = vec![
             tok!(code "statement;"),
         ];
+        let transform = tokens.clone();
+        let output = input.clone();
 
-        full_process_assert(&code, tokens);
+        full_process_assert(&input, tokens, transform, &output);
     }
 
     #[test]
     fn test_tokenize_single_statement() {
-        let code = "statement;\n";
+        let input = "statement;\n";
         let tokens = vec![
-            tok!(code "statement;"),
-            tok!(nl),
+            tok!(code "statement;"), tok!(nl),
         ];
+        let transform = tokens.clone();
+        let output = input.clone();
 
-        full_process_assert(&code, tokens);
+        full_process_assert(&input, tokens, transform, &output);
     }
 
     #[test]
     fn test_tokenize_newline() {
-        let code = unindent("
+        let input = unindent("
             statement;
             statement;
             ");
         let tokens = vec![
-            tok!(code "statement;"),
-            tok!(nl),
-
-            tok!(code "statement;"),
-            tok!(nl),
+            tok!(code "statement;"), tok!(nl),
+            tok!(code "statement;"), tok!(nl),
         ];
+        let transform = tokens.clone();
+        let output = input.clone();
 
-        full_process_assert(&code, tokens);
+        full_process_assert(&input, tokens, transform, &output);
     }
 
     #[test]
     fn test_tokenize_single_indent_and_dedent() {
-        let code = unindent("
+        let input = unindent("
+            if condition
+                something happens;
+            ");
+        let tokens = vec![
+            tok!(code "if condition"), tok!(nl),
+            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
+            tok!(dedent),
+        ];
+        let transform = vec![
+            tok!(code "if condition"), tok!(code " "), tok!(open brace), tok!(nl),
+            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
+            tok!(close brace), tok!(nl),
+        ];
+        let output = unindent("
+            if condition {
+                something happens;
+            }
+            ");
+
+        full_process_assert(&input, tokens, transform, &output);
+    }
+
+    #[test]
+    fn test_tokenize_single_indent_and_dedent_no_newline() {
+        let input = unindent("
             if condition
                 something happens;");
         let tokens = vec![
-            tok!(code "if condition"),
-            tok!(nl),
-
-            tok!(indent "    "),
-            tok!(code "something happens;"),
-
+            tok!(code "if condition"), tok!(nl),
+            tok!(indent "    "), tok!(code "something happens;"),
             tok!(dedent),
         ];
+        let transform = vec![
+            tok!(code "if condition"), tok!(code " "), tok!(open brace), tok!(nl),
+            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
+            tok!(close brace), tok!(nl),
+        ];
+        let output = unindent("
+            if condition {
+                something happens;
+            }
+            ");
 
-        full_process_assert(&code, tokens);
+        full_process_assert(&input, tokens, transform, &output);
     }
 
     #[test]
     fn test_tokenize_basic_if_else_structure() {
-        let code = unindent("
+        let input = unindent("
             if condition
                 something happens;
             else
-                something else happens;");
+                something else happens;
+            ");
         let tokens = vec![
-            tok!(code "if condition"),
-            tok!(nl),
-
-            tok!(indent "    "),
-            tok!(code "something happens;"),
-            tok!(nl),
-
-            tok!(dedent),
-            tok!(code "else"),
-            tok!(nl),
-
-            tok!(indent "    "),
-            tok!(code "something else happens;"),
-
+            tok!(code "if condition"), tok!(nl),
+            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
+            tok!(dedent), tok!(code "else"), tok!(nl),
+            tok!(indent "    "), tok!(code "something else happens;"), tok!(nl),
             tok!(dedent),
         ];
+        let transform = vec![
+            tok!(code "if condition"), tok!(code " "), tok!(open brace), tok!(nl),
+            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
+            tok!(close brace), tok!(nl),
+            tok!(code "else"), tok!(code " "), tok!(open brace), tok!(nl),
+            tok!(indent "    "), tok!(code "something else happens;"), tok!(nl),
+            tok!(close brace), tok!(nl),
+        ];
+        let output = unindent("
+            if condition {
+                something happens;
+            }
+            else {
+                something else happens;
+            }
+            ");
 
-        full_process_assert(&code, tokens);
+        full_process_assert(&input, tokens, transform, &output);
     }
 
 }
