@@ -88,7 +88,14 @@ impl TokenList {
                 },
 
                 // handle reading code
-                (LineStart, Some(_)) |
+                (LineStart, Some(_)) => {
+                    // check if the indent stack is empty,
+                    // otherwise add the necessary dedents
+                    for _ in self.indent_stack.drain(..) {
+                        self.tokens.push(Token::Dedent);
+                    }
+                    state = Waiting;
+                },
                 (Waiting, Some(_)) => {
                     state = ReadingCode;
                 },
@@ -203,6 +210,7 @@ mod tests {
         let expected = vec![
             tok!(code "statement;"),
             tok!(nl),
+
             tok!(code "statement;"),
             tok!(nl),
         ];
@@ -218,8 +226,38 @@ mod tests {
         let expected = vec![
             tok!(code "if condition"),
             tok!(nl),
+
             tok!(indent "    "),
             tok!(code "something happens;"),
+
+            tok!(dedent),
+        ];
+        let actual = tokenize(&code);
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_tokenize_basic_if_else_structure() {
+        let code = unindent("
+            if condition
+                something happens;
+            else
+                something else happens;");
+        let expected = vec![
+            tok!(code "if condition"),
+            tok!(nl),
+
+            tok!(indent "    "),
+            tok!(code "something happens;"),
+            tok!(nl),
+
+            tok!(dedent),
+            tok!(code "else"),
+            tok!(nl),
+
+            tok!(indent "    "),
+            tok!(code "something else happens;"),
+
             tok!(dedent),
         ];
         let actual = tokenize(&code);
