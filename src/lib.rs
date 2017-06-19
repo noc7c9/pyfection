@@ -50,7 +50,6 @@ impl TokenList {
         loop {
             // { println!("={:?} {:?}", iter.peek(), state); }
 
-            // TODO: this is order dependant, it shouldn't be
             // source = https://stackoverflow.com/a/26927642
             let r = iter.peek().map(|c| *c);
             match (state, r) {
@@ -127,10 +126,26 @@ fn tokenize(code: &str) -> Vec<Token> {
     return token_list.tokens;
 }
 
+fn generate_code(tokens: &Vec<Token>) -> String {
+    let mut code = String::new();
+
+    for tok in tokens {
+        match tok {
+            &Token::Code(ref string) => code.push_str(&string),
+            &Token::Newline => code.push('\n'),
+            &Token::Indent(ref string) => code.push_str(&string),
+            &Token::Dedent => (),
+        }
+    }
+
+    return code;
+}
+
 fn process(code: &str) -> String {
     let tokens = tokenize(code);
+    let code = generate_code(&tokens);
 
-    return format!("{:?}", tokens);
+    return code;
 }
 
 
@@ -176,6 +191,15 @@ mod tests {
         (dedent) => (Token::Dedent);
     }
 
+    fn full_process_assert(input: &str, expected_tokens: Vec<Token>) {
+        // assert that generated token list is the same as expected token list
+        let generated_tokens = tokenize(input);
+        assert_eq!(expected_tokens, generated_tokens);
+
+        // assert that untransformed generated token list matches the code
+        assert_eq!(input, generate_code(&generated_tokens));
+    }
+
     /***
      * Tokenizer tests
      */
@@ -183,22 +207,22 @@ mod tests {
     #[test]
     fn test_tokenize_single_statement_no_newline() {
         let code = "statement;";
-        let expected = vec![
+        let tokens = vec![
             tok!(code "statement;"),
         ];
-        let actual = tokenize(code);
-        assert_eq!(expected, actual);
+
+        full_process_assert(&code, tokens);
     }
 
     #[test]
     fn test_tokenize_single_statement() {
         let code = "statement;\n";
-        let expected = vec![
+        let tokens = vec![
             tok!(code "statement;"),
             tok!(nl),
         ];
-        let actual = tokenize(&code);
-        assert_eq!(expected, actual);
+
+        full_process_assert(&code, tokens);
     }
 
     #[test]
@@ -207,15 +231,15 @@ mod tests {
             statement;
             statement;
             ");
-        let expected = vec![
+        let tokens = vec![
             tok!(code "statement;"),
             tok!(nl),
 
             tok!(code "statement;"),
             tok!(nl),
         ];
-        let actual = tokenize(&code);
-        assert_eq!(expected, actual);
+
+        full_process_assert(&code, tokens);
     }
 
     #[test]
@@ -223,7 +247,7 @@ mod tests {
         let code = unindent("
             if condition
                 something happens;");
-        let expected = vec![
+        let tokens = vec![
             tok!(code "if condition"),
             tok!(nl),
 
@@ -232,8 +256,8 @@ mod tests {
 
             tok!(dedent),
         ];
-        let actual = tokenize(&code);
-        assert_eq!(expected, actual);
+
+        full_process_assert(&code, tokens);
     }
 
     #[test]
@@ -243,7 +267,7 @@ mod tests {
                 something happens;
             else
                 something else happens;");
-        let expected = vec![
+        let tokens = vec![
             tok!(code "if condition"),
             tok!(nl),
 
@@ -260,8 +284,8 @@ mod tests {
 
             tok!(dedent),
         ];
-        let actual = tokenize(&code);
-        assert_eq!(expected, actual);
+
+        full_process_assert(&code, tokens);
     }
 
 }

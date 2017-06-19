@@ -9,7 +9,7 @@ fn main() {
             println!("Usage: {} PATH", args[0]);
         },
         Some(filepath) => {
-            println!("Output: {}", pyfection::process_file(filepath));
+            print!("{}", pyfection::process_file(filepath));
             return;
         }
     }
