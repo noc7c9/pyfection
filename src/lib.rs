@@ -133,14 +133,20 @@ fn transform(mut input: Vec<Token>) -> Vec<Token> {
     for tok in input.drain(..) {
         match tok {
             Token::Indent(_) => {
-                // should only panic on invalid input
-                let newline = output.pop().unwrap();
+                // find last code token in the output
+                let mut index = output.len() - 1;
+                loop {
+                    index = match output.get(index) {
+                        Some(&Token::Code(_)) => break,
+                        _ => index - 1,
+                    }
+                }
 
-                output.push(Token::Code(String::from(" ")));
-                output.push(Token::OpenBrace);
+                // insert brace immediately after that token
+                output.insert(index + 1, Token::Code(String::from(" ")));
+                output.insert(index + 2, Token::OpenBrace);
 
-                output.push(newline);
-
+                // insert indent token
                 output.push(tok);
             },
             Token::Dedent => {
@@ -253,7 +259,7 @@ mod tests {
      */
 
     #[test]
-    fn test_tokenize_single_statement_no_newline() {
+    fn test_single_statement_no_newline() {
         let input = "statement;";
         let tokens = vec![
             tok!(code "statement;"),
@@ -265,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_single_statement() {
+    fn test_single_statement() {
         let input = "statement;\n";
         let tokens = vec![
             tok!(code "statement;"), tok!(nl),
@@ -277,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_newline() {
+    fn test_newline() {
         let input = unindent("
             statement;
             statement;
@@ -293,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_single_indent_and_dedent() {
+    fn test_single_indent_and_dedent() {
         let input = unindent("
             if condition
                 something happens;
@@ -318,7 +324,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_single_indent_and_dedent_no_newline() {
+    fn test_single_indent_and_dedent_no_newline() {
         let input = unindent("
             if condition
                 something happens;");
@@ -342,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_basic_if_else_structure() {
+    fn test_basic_if_else_structure() {
         let input = unindent("
             if condition
                 something happens;
@@ -370,6 +376,34 @@ mod tests {
             }
             else {
                 something else happens;
+            }
+            ");
+
+        full_process_assert(&input, tokens, transform, &output);
+    }
+
+    #[test]
+    fn test_gap_indent() {
+        let input = unindent("
+            if condition
+
+                something happens;");
+        let tokens = vec![
+            tok!(code "if condition"), tok!(nl),
+            tok!(nl),
+            tok!(indent "    "), tok!(code "something happens;"),
+            tok!(dedent),
+        ];
+        let transform = vec![
+            tok!(code "if condition"), tok!(code " "), tok!(open brace), tok!(nl),
+            tok!(nl),
+            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
+            tok!(close brace), tok!(nl),
+        ];
+        let output = unindent("
+            if condition {
+
+                something happens;
             }
             ");
 
