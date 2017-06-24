@@ -51,7 +51,7 @@ impl TokenList {
         loop {
             // { println!("={:?} {:?}", iter.peek(), state); }
 
-            // source = https://stackoverflow.com/a/26927642
+            // source: https://stackoverflow.com/a/26927642
             let r = iter.peek().map(|c| *c);
             match (state, r) {
                 // stop reading, ie. ReadingCode exit handler
@@ -226,13 +226,42 @@ mod tests {
      * Helpers
      */
 
-    macro_rules! tok {
-        (code $string : expr) => (Token::Code(String::from($string)));
-        (nl) => (Token::Newline);
-        (indent $string : expr) => (Token::Indent(String::from($string)));
-        (dedent) => (Token::Dedent);
-        (open brace) => (Token::OpenBrace);
-        (close brace) => (Token::CloseBrace);
+    // uses the tt-muncher pattern described here:
+    // https://danielkeep.github.io/tlborm/book/pat-incremental-tt-munchers.html
+    macro_rules! tokens {
+        // recursive processing of token list
+        ($vec:ident;) => {};
+        ($vec:ident; c$code:expr, $($tail:tt)*) => {
+            $vec.push(Token::Code(String::from($code)));
+            tokens!($vec; $($tail)*);
+        };
+        ($vec:ident; nl, $($tail:tt)*) => {
+            $vec.push(Token::Newline);
+            tokens!($vec; $($tail)*);
+        };
+        ($vec:ident; >$whitespace:expr, $($tail:tt)*) => {
+            $vec.push(Token::Indent(String::from($whitespace)));
+            tokens!($vec; $($tail)*);
+        };
+        ($vec:ident; <, $($tail:tt)*) => {
+            $vec.push(Token::Dedent);
+            tokens!($vec; $($tail)*);
+        };
+        ($vec:ident; ob, $($tail:tt)*) => {
+            $vec.push(Token::OpenBrace);
+            tokens!($vec; $($tail)*);
+        };
+        ($vec:ident; cb, $($tail:tt)*) => {
+            $vec.push(Token::CloseBrace);
+            tokens!($vec; $($tail)*);
+        };
+
+        // external entry point
+        ($($tokens:tt)*) => {{
+            let mut temp_vec = Vec::<Token>::new();
+            tokens!(temp_vec; $($tokens)*);
+            temp_vec
+        }};
     }
 
     fn full_process_assert(input: &str,
@@ -261,8 +290,8 @@ mod tests {
     #[test]
     fn test_single_statement_no_newline() {
         let input = "statement;";
-        let tokens = vec![
-            tok!(code "statement;"),
+        let tokens = tokens![
+            c"statement;",
         ];
         let transform = tokens.clone();
         let output = input.clone();
@@ -273,8 +302,8 @@ mod tests {
     #[test]
     fn test_single_statement() {
         let input = "statement;\n";
-        let tokens = vec![
-            tok!(code "statement;"), tok!(nl),
+        let tokens = tokens![
+            c"statement;", nl,
         ];
         let transform = tokens.clone();
         let output = input.clone();
@@ -288,9 +317,9 @@ mod tests {
             statement;
             statement;
             ");
-        let tokens = vec![
-            tok!(code "statement;"), tok!(nl),
-            tok!(code "statement;"), tok!(nl),
+        let tokens = tokens![
+            c"statement;", nl,
+            c"statement;", nl,
         ];
         let transform = tokens.clone();
         let output = input.clone();
@@ -304,15 +333,15 @@ mod tests {
             if condition
                 something happens;
             ");
-        let tokens = vec![
-            tok!(code "if condition"), tok!(nl),
-            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
-            tok!(dedent),
+        let tokens = tokens![
+            c"if condition", nl,
+            >"    ", c"something happens;", nl,
+            <,
         ];
-        let transform = vec![
-            tok!(code "if condition"), tok!(code " "), tok!(open brace), tok!(nl),
-            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
-            tok!(close brace), tok!(nl),
+        let transform = tokens![
+            c"if condition", c" ", ob, nl,
+            >"    ", c"something happens;", nl,
+            cb, nl,
         ];
         let output = unindent("
             if condition {
@@ -328,15 +357,15 @@ mod tests {
         let input = unindent("
             if condition
                 something happens;");
-        let tokens = vec![
-            tok!(code "if condition"), tok!(nl),
-            tok!(indent "    "), tok!(code "something happens;"),
-            tok!(dedent),
+        let tokens = tokens![
+            c"if condition", nl,
+            >"    ", c"something happens;",
+            <,
         ];
-        let transform = vec![
-            tok!(code "if condition"), tok!(code " "), tok!(open brace), tok!(nl),
-            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
-            tok!(close brace), tok!(nl),
+        let transform = tokens![
+            c"if condition", c" ", ob, nl,
+            >"    ", c"something happens;", nl,
+            cb, nl,
         ];
         let output = unindent("
             if condition {
@@ -355,20 +384,20 @@ mod tests {
             else
                 something else happens;
             ");
-        let tokens = vec![
-            tok!(code "if condition"), tok!(nl),
-            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
-            tok!(dedent), tok!(code "else"), tok!(nl),
-            tok!(indent "    "), tok!(code "something else happens;"), tok!(nl),
-            tok!(dedent),
+        let tokens = tokens![
+            c"if condition", nl,
+            >"    ", c"something happens;", nl,
+            <, c"else", nl,
+            >"    ", c"something else happens;", nl,
+            <,
         ];
-        let transform = vec![
-            tok!(code "if condition"), tok!(code " "), tok!(open brace), tok!(nl),
-            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
-            tok!(close brace), tok!(nl),
-            tok!(code "else"), tok!(code " "), tok!(open brace), tok!(nl),
-            tok!(indent "    "), tok!(code "something else happens;"), tok!(nl),
-            tok!(close brace), tok!(nl),
+        let transform = tokens![
+            c"if condition", c" ", ob, nl,
+            >"    ", c"something happens;", nl,
+            cb, nl,
+            c"else", c" ", ob, nl,
+            >"    ", c"something else happens;", nl,
+            cb, nl,
         ];
         let output = unindent("
             if condition {
@@ -388,17 +417,17 @@ mod tests {
             if condition
 
                 something happens;");
-        let tokens = vec![
-            tok!(code "if condition"), tok!(nl),
-            tok!(nl),
-            tok!(indent "    "), tok!(code "something happens;"),
-            tok!(dedent),
+        let tokens = tokens![
+            c"if condition", nl,
+            nl,
+            >"    ", c"something happens;",
+            <,
         ];
-        let transform = vec![
-            tok!(code "if condition"), tok!(code " "), tok!(open brace), tok!(nl),
-            tok!(nl),
-            tok!(indent "    "), tok!(code "something happens;"), tok!(nl),
-            tok!(close brace), tok!(nl),
+        let transform = tokens![
+            c"if condition", c" ", ob, nl,
+            nl,
+            >"    ", c"something happens;", nl,
+            cb, nl,
         ];
         let output = unindent("
             if condition {
