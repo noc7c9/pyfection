@@ -11,7 +11,7 @@ use std::io::{BufReader, Read};
 
 #[derive(PartialEq, Debug, Clone)]
 enum Token {
-    Code(String),
+    Code(String), Whitespace(String),
     Newline,
     Indent(String), Dedent,
     OpenBrace, CloseBrace,
@@ -67,15 +67,57 @@ impl TokenList {
                     state = ReadingIndent;
                 }
                 (ReadingIndent, Some(' ')) => {
-                    iter.next();
-                    buf.push(' ');
+                    // if there are Indent tokens on the stack
+                    // compare with those tokens
+                    let mut index = 0;
+                    while let Some(ref indent) = self.indent_stack.get(index) {
+                        loop {
+                            match iter.peek() {
+                                Some(&' ') => {
+                                    iter.next();
+                                    buf.push(' ');
+                                    if buf.len() == indent.len() {
+                                        self.tokens.push(Token::Whitespace(buf.clone()));
+                                        buf.clear();
+                                        break; // go to next indent
+                                    }
+                                },
+                                _ => {
+                                    // code started before reaching same indent level
+                                    state = Waiting;
+                                    break;
+                                }
+                            }
+                        }
+                        if let Waiting = state {
+                            break;
+                        }
+                        index += 1;
+                    }
+
+                    // check all the indent levels were reached
+                    if let Waiting = state {
+                        // nope, so need to add dedent tokens
+                        // and update indent stack
+                        for _ in self.indent_stack.drain(index..) {
+                            self.tokens.push(Token::Dedent);
+                        }
+                    } else {
+                        // yes, so any remaining whitespace is new indentation
+                        while let Some(&' ') = iter.peek() {
+                            iter.next();
+                            buf.push(' ');
+                        }
+                    }
                 },
 
                 // stop reading indent, ReadingIndent exit handler
                 (ReadingIndent, _) => {
-                    self.tokens.push(Token::Indent(buf.clone()));
-                    self.indent_stack.push(buf.clone());
-                    buf.clear();
+                    if buf.len() > 0 {
+                        self.tokens.push(Token::Indent(buf.clone()));
+                        self.indent_stack.push(buf.clone());
+                        buf.clear();
+                    }
                     state = Waiting;
                 },
 
@@ -127,36 +169,50 @@ fn tokenize(code: &str) -> Vec<Token> {
     return token_list.tokens;
 }
 
+fn index_of_last_code_token(tokens: &Vec<Token>) -> Option<usize> {
+    // find last code token in the output
+    let mut index = tokens.len() - 1;
+    loop {
+        index = match tokens.get(index) {
+            Some(&Token::Code(_)) => return Some(index),
+            Some(_) => index - 1,
+            None => return None,
+        }
+    }
+}
+
 fn transform(mut input: Vec<Token>) -> Vec<Token> {
     let mut output = Vec::<Token>::new();
 
     for tok in input.drain(..) {
         match tok {
             Token::Indent(_) => {
-                // find last code token in the output
-                let mut index = output.len() - 1;
-                loop {
-                    index = match output.get(index) {
-                        Some(&Token::Code(_)) => break,
-                        _ => index - 1,
-                    }
-                }
+                let index = match index_of_last_code_token(&output) {
+                    Some(index) => index,
+                    None => output.len() - 1,
+                };
 
                 // insert brace immediately after that token
-                output.insert(index + 1, Token::Code(String::from(" ")));
+                output.insert(index + 1, Token::Whitespace(String::from(" ")));
                 output.insert(index + 2, Token::OpenBrace);
 
-                // insert indent token
+                // push indent token onto the end
                 output.push(tok);
             },
             Token::Dedent => {
-                // make sure previous token is a newline
-                if output.last() != Some(&Token::Newline) {
-                    output.push(Token::Newline);
-                }
+                let index = match index_of_last_code_token(&output) {
+                    Some(index) => index,
+                    None => output.len() - 1,
+                };
 
-                output.push(Token::CloseBrace);
-                output.push(Token::Newline);
+                // insert brace immediately after that token
+                output.insert(index + 1, Token::Newline);
+                output.insert(index + 2, Token::CloseBrace);
+
+                // make sure token after brace is a newline
+                if output.get(index + 3) != Some(&Token::Newline) {
+                    output.insert(index + 3, Token::Newline);
+                }
             },
             _ => output.push(tok),
         }
@@ -171,6 +227,7 @@ fn generate_code(tokens: &Vec<Token>) -> String {
     for tok in tokens {
         match tok {
             &Token::Code(ref string) => code.push_str(&string),
+            &Token::Whitespace(ref string) => code.push_str(&string),
             &Token::Newline => code.push('\n'),
             &Token::Indent(ref string) => code.push_str(&string),
             &Token::Dedent => (),
@@ -216,6 +273,7 @@ pub fn process_file(filepath: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(unused_variables)]
 mod tests {
     extern crate unindent;
     use self::unindent::unindent;
@@ -233,6 +291,10 @@ mod tests {
         ($vec:ident;) => {};
         ($vec:ident; c$code:expr, $($tail:tt)*) => {
             $vec.push(Token::Code(String::from($code)));
+            tokens!($vec; $($tail)*);
+        };
+        ($vec:ident; w$code:expr, $($tail:tt)*) => {
+            $vec.push(Token::Whitespace(String::from($code)));
             tokens!($vec; $($tail)*);
         };
         ($vec:ident; nl, $($tail:tt)*) => {
@@ -268,9 +330,9 @@ mod tests {
                            expected_tokens: Option<Vec<Token>>,
                            expected_transform: Option<Vec<Token>>,
                            expected_code: Option<&str>) {
-        let generated_tokens = tokenize(input);
-        let transformed_tokens = transform(generated_tokens.clone());
-        let final_code = generate_code(&transformed_tokens);
+        let generated = tokenize(input);
+        let transformed = transform(generated.clone());
+        let final_code = generate_code(&transformed);
 
         // make sure at least one of the expected outputs is given
         assert!(
@@ -280,18 +342,22 @@ mod tests {
 
         // assert that generated token list is the same as expected token list
         if let Some(expected_tokens) = expected_tokens {
-            assert_eq!(expected_tokens, generated_tokens,
-                    "Generated token list didn't match expected list.");
+            assert_eq!(expected_tokens, generated,
+                "\n\nGenerated token list didn't match expected list.\
+                \nExpected:\n{:?}\nActual:\n{:?}\n",
+                expected_tokens, generated);
         }
 
         // assert that untransformed generated code matches the input code
-        assert_eq!(input, generate_code(&generated_tokens),
-                  "Untransformed token list didn't match input code.");
+        assert_eq!(input, generate_code(&generated),
+            "Untransformed token list didn't match input code.");
 
         // assert that transformed token list matches expected output
         if let Some(expected_transform) = expected_transform {
-            assert_eq!(expected_transform, transformed_tokens,
-                    "Transformed token list didn't match expected list.");
+            assert_eq!(expected_transform, transformed,
+                "\n\nTransformed token list didn't match expected list.\
+                \nExpected:\n{:?}\nActual:\n{:?}\n",
+                expected_transform, transformed);
         }
 
         // assert that transformed generated code matches the expected output
@@ -346,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn test_single_indent_and_dedent() {
+    fn test_single_indent() {
         let input = unindent("
             if condition
                 something happens;
@@ -357,7 +423,7 @@ mod tests {
             <,
         ];
         let transform = tokens![
-            c"if condition", c" ", ob, nl,
+            c"if condition", w" ", ob, nl,
             >"    ", c"something happens;", nl,
             cb, nl,
         ];
@@ -371,7 +437,40 @@ mod tests {
     }
 
     #[test]
-    fn test_single_indent_and_dedent_no_newline() {
+    fn test_multiple_lines_single_indent() {
+        let input = unindent("
+            if condition
+                something happens;
+                something happens;
+                something happens;
+            ");
+        let tokens = tokens![
+            c"if condition", nl,
+            >"    ", c"something happens;", nl,
+            w"    ", c"something happens;", nl,
+            w"    ", c"something happens;", nl,
+            <,
+        ];
+        let transform = tokens![
+            c"if condition", w" ", ob, nl,
+            >"    ", c"something happens;", nl,
+            w"    ", c"something happens;", nl,
+            w"    ", c"something happens;", nl,
+            cb, nl,
+        ];
+        let output = unindent("
+            if condition {
+                something happens;
+                something happens;
+                something happens;
+            }
+            ");
+
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
+    }
+
+    #[test]
+    fn test_single_indent_no_newline() {
         let input = unindent("
             if condition
                 something happens;");
@@ -381,7 +480,7 @@ mod tests {
             <,
         ];
         let transform = tokens![
-            c"if condition", c" ", ob, nl,
+            c"if condition", w" ", ob, nl,
             >"    ", c"something happens;", nl,
             cb, nl,
         ];
@@ -410,10 +509,10 @@ mod tests {
             <,
         ];
         let transform = tokens![
-            c"if condition", c" ", ob, nl,
+            c"if condition", w" ", ob, nl,
             >"    ", c"something happens;", nl,
             cb, nl,
-            c"else", c" ", ob, nl,
+            c"else", w" ", ob, nl,
             >"    ", c"something else happens;", nl,
             cb, nl,
         ];
@@ -442,7 +541,7 @@ mod tests {
             <,
         ];
         let transform = tokens![
-            c"if condition", c" ", ob, nl,
+            c"if condition", w" ", ob, nl,
             nl,
             >"    ", c"something happens;", nl,
             cb, nl,
@@ -455,6 +554,201 @@ mod tests {
             ");
 
         full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
+    }
+
+    #[test]
+    fn test_double_indent() {
+        let input = unindent("
+            if condition 1
+                if condition 2
+                    statement;
+            ");
+        let tokens = tokens![
+            c"if condition 1", nl,
+            >"    ", c"if condition 2", nl,
+            w"    ", >"    ", c"statement;", nl,
+            <, <,
+        ];
+        let transform = tokens![
+            c"if condition 1", w" ", ob, nl,
+            >"    ", c"if condition 2", w" ", ob, nl,
+            w"    ", >"    ", c"statement;", nl,
+            cb, nl,
+            cb, nl,
+        ];
+        let output = unindent("
+            if condition 1 {
+                if condition 2 {
+                    statement;
+            }
+            }
+            ");
+
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
+    }
+
+    #[test]
+    fn test_double_if_else() {
+        let input = unindent("
+            if condition 1
+                if condition 2
+                    statement 1;
+                else
+                    statement 2;
+            else
+                statement 3;
+            ");
+        let tokens = tokens![
+            c"if condition 1", nl,
+            >"    ", c"if condition 2", nl,
+            w"    ", >"    ", c"statement 1;", nl,
+            w"    ", <, c"else", nl,
+            w"    ", >"    ", c"statement 2;", nl,
+            <, <, c"else", nl,
+            >"    ", c"statement 3;", nl,
+            <,
+        ];
+        let transform = tokens![
+            c"if condition 1", w" ", ob, nl,
+            >"    ", c"if condition 2", w" ", ob, nl,
+            w"    ", >"    ", c"statement 1;", nl,
+            cb, nl,
+            w"    ", c"else", w" ", ob, nl,
+            w"    ", >"    ", c"statement 2;", nl,
+            cb, nl,
+            cb, nl,
+            c"else", w" ", ob, nl,
+            >"    ", c"statement 3;", nl,
+            cb, nl,
+        ];
+        let output = unindent("
+            if condition 1 {
+                if condition 2 {
+                    statement 1;
+            }
+                else {
+                    statement 2;
+            }
+            }
+            else {
+                statement 3;
+            }
+            ");
+
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
+    }
+
+    #[test]
+    fn test_complex_indentation() {
+        let input = unindent("
+            if cond
+                if cond
+                    if cond
+                        if cond
+                            if cond
+                                statement;
+                            else
+                                statement;
+                        else
+                            statement;
+                        if cond
+                            if cond
+                                if cond
+                                    if cond
+                                        statement;
+                                else
+                                    statement;
+                                if cond
+                                    if cond
+                                        statement;
+                                    else
+                                        statement;
+                                else
+                                    statement;
+                            else
+                                statement;
+                    else
+                        if cond
+                            if cond
+                                statement;
+                            else
+                                statement;
+                        else
+                            statement;
+                else
+                    if cond
+                        statement;
+            else
+                statement;
+            ");
+        let output = unindent("
+            if cond {
+                if cond {
+                    if cond {
+                        if cond {
+                            if cond {
+                                statement;
+            }
+                            else {
+                                statement;
+            }
+            }
+                        else {
+                            statement;
+            }
+                        if cond {
+                            if cond {
+                                if cond {
+                                    if cond {
+                                        statement;
+            }
+            }
+                                else {
+                                    statement;
+            }
+                                if cond {
+                                    if cond {
+                                        statement;
+            }
+                                    else {
+                                        statement;
+            }
+            }
+                                else {
+                                    statement;
+            }
+            }
+                            else {
+                                statement;
+            }
+            }
+            }
+                    else {
+                        if cond {
+                            if cond {
+                                statement;
+            }
+                            else {
+                                statement;
+            }
+            }
+                        else {
+                            statement;
+            }
+            }
+            }
+                else {
+                    if cond {
+                        statement;
+            }
+            }
+            }
+            else {
+                statement;
+            }
+            ");
+
+        full_process_assert(&input, None, None, Some(&output));
     }
 
 }
