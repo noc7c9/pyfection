@@ -265,26 +265,44 @@ mod tests {
     }
 
     fn full_process_assert(input: &str,
-                           expected_tokens: Vec<Token>,
-                           expected_transform: Vec<Token>,
-                           expected_code: &str) {
-        // assert that generated token list is the same as expected token list
+                           expected_tokens: Option<Vec<Token>>,
+                           expected_transform: Option<Vec<Token>>,
+                           expected_code: Option<&str>) {
         let generated_tokens = tokenize(input);
-        assert_eq!(expected_tokens, generated_tokens);
+        let transformed_tokens = transform(generated_tokens.clone());
+        let final_code = generate_code(&transformed_tokens);
+
+        // make sure at least one of the expected outputs is given
+        assert!(
+            expected_tokens != None ||
+            expected_transform != None ||
+            expected_code != None, "All expected output args are None.");
+
+        // assert that generated token list is the same as expected token list
+        if let Some(expected_tokens) = expected_tokens {
+            assert_eq!(expected_tokens, generated_tokens,
+                    "Generated token list didn't match expected list.");
+        }
 
         // assert that untransformed generated code matches the input code
-        assert_eq!(input, generate_code(&generated_tokens));
+        assert_eq!(input, generate_code(&generated_tokens),
+                  "Untransformed token list didn't match input code.");
 
         // assert that transformed token list matches expected output
-        let transformed_tokens = transform(generated_tokens);
-        assert_eq!(expected_transform, transformed_tokens);
+        if let Some(expected_transform) = expected_transform {
+            assert_eq!(expected_transform, transformed_tokens,
+                    "Transformed token list didn't match expected list.");
+        }
 
         // assert that transformed generated code matches the expected output
-        assert_eq!(expected_code, generate_code(&transformed_tokens));
+        if let Some(expected_code) = expected_code {
+            assert_eq!(expected_code, final_code,
+                    "Final output didn't match expected output.");
+        }
     }
 
     /***
-     * Tokenizer tests
+     * Tests
      */
 
     #[test]
@@ -296,7 +314,7 @@ mod tests {
         let transform = tokens.clone();
         let output = input.clone();
 
-        full_process_assert(&input, tokens, transform, &output);
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
     }
 
     #[test]
@@ -308,7 +326,7 @@ mod tests {
         let transform = tokens.clone();
         let output = input.clone();
 
-        full_process_assert(&input, tokens, transform, &output);
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
     }
 
     #[test]
@@ -324,7 +342,7 @@ mod tests {
         let transform = tokens.clone();
         let output = input.clone();
 
-        full_process_assert(&input, tokens, transform, &output);
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
     }
 
     #[test]
@@ -349,7 +367,7 @@ mod tests {
             }
             ");
 
-        full_process_assert(&input, tokens, transform, &output);
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
     }
 
     #[test]
@@ -373,7 +391,7 @@ mod tests {
             }
             ");
 
-        full_process_assert(&input, tokens, transform, &output);
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
     }
 
     #[test]
@@ -408,7 +426,7 @@ mod tests {
             }
             ");
 
-        full_process_assert(&input, tokens, transform, &output);
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
     }
 
     #[test]
@@ -436,7 +454,7 @@ mod tests {
             }
             ");
 
-        full_process_assert(&input, tokens, transform, &output);
+        full_process_assert(&input, Some(tokens), Some(transform), Some(&output));
     }
 
 }
