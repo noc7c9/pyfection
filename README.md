@@ -65,6 +65,8 @@ $ ./pyfect fizzbuzz.c.pyf | gcc -x c - && ./a.out
 1, 2, fizz, 4, buzz, fizz, 7, 8, fizz, buzz, 11, fizz, 13, 14, fizzbuzz,
 ```
 
+A [bigger example](https://github.com/noc7c9/pyfect-csproj1) of pyfect code.
+
 Why?
 =
 This isn't a serious project (duh), it is instead something I chose to make in order to learn [rust](http://rust-lang.org) as well as a chance to parse an indent based language which was definitely interesting.
